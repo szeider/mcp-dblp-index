@@ -1,0 +1,77 @@
+name: Build monthly dblp index
+
+on:
+  schedule:
+    - cron: "17 6 2 * *"   # 2nd of each month, 06:17 UTC (dblp releases on the 1st)
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "Dump release date (YYYY-MM-01); default = first of the current month"
+        required: false
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pick release
+        id: rel
+        run: |
+          REL="${{ github.event.inputs.release }}"
+          [ -n "$REL" ] || REL="$(date -u +%Y-%m)-01"
+          echo "release=$REL" >> "$GITHUB_OUTPUT"
+          if gh release view "dblp-$REL" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"; echo "release dblp-$REL already published"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - uses: actions/setup-python@v5
+        if: steps.rel.outputs.exists == 'false'
+        with:
+          python-version: "3.12"
+
+      - name: Install tools
+        if: steps.rel.outputs.exists == 'false'
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q zstd sqlite3
+          pip install -q "mcp-dblp @ git+https://github.com/szeider/mcp-dblp@main"
+          mcp-dblp-index --help >/dev/null
+
+      - name: Build release
+        if: steps.rel.outputs.exists == 'false'
+        run: scripts/build_release.sh "${{ steps.rel.outputs.release }}" "${{ runner.temp }}/out"
+
+      - name: Publish release
+        if: steps.rel.outputs.exists == 'false'
+        run: |
+          REL="${{ steps.rel.outputs.release }}"
+          cd "${{ runner.temp }}/out"
+          PUBS=$(python3 -c "import json;print(json.load(open('latest.json'))['publications'])")
+          gh release create "dblp-$REL" --title "dblp index $REL" \
+            --notes "Prebuilt SQLite index of the dblp XML dump released $REL ($PUBS publications). Data: CC0, https://dblp.org. Built by mcp-dblp-index-builder; see latest.json for checksums." \
+            "dblp-$REL.sqlite.zst" latest.json
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Keepalive commit
+        if: steps.rel.outputs.exists == 'false'
+        run: |
+          echo "${{ steps.rel.outputs.release }}" > LAST_RELEASE
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add LAST_RELEASE && git commit -m "Release dblp-${{ steps.rel.outputs.release }}" && git push
+
+      - name: Open issue on failure
+        if: failure()
+        run: gh issue create --title "Index build failed for ${{ steps.rel.outputs.release || 'unknown release' }}" --body "See run ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        env:
+          GH_TOKEN: ${{ github.token }}
