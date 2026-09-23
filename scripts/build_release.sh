@@ -17,33 +17,7 @@ EXPECTED=$(awk '{print $1}' "$DUMP.md5"); ACTUAL=$(md5sum "$DUMP" | awk '{print 
 echo "== build $SQL"
 mcp-dblp-index build-file "$DUMP" "$SQL"
 rm -f "$DUMP" "$DUMP.md5"
-META_REL=$(sqlite3 "$SQL" "select v from meta where k='release'")
-SCHEMA=$(sqlite3 "$SQL" "select v from meta where k='schema'")
-PUBS=$(sqlite3 "$SQL" "select v from meta where k='publications'")
-[ "$META_REL" = "$REL" ] || { echo "index release $META_REL != $REL"; exit 1; }
 
-echo "== compress"
-zstd -19 -T0 --rm -q "$SQL" -o "$ZST" || { zstd -19 -T0 -q "$SQL" -o "$ZST"; rm -f "$SQL"; }
-# note: --rm removes the sqlite after compression; we need its sha256 first, so recompute via decompression stream
-SQL_SHA=$(zstd -dc "$ZST" | sha256sum | awk '{print $1}')
-SQL_SIZE=$(zstd -l "$ZST" 2>/dev/null | awk 'NR==2{print $5}' | tr -d ',')
-ZST_SHA=$(sha256sum "$ZST" | awk '{print $1}')
-ZST_SIZE=$(stat -c %s "$ZST" 2>/dev/null || stat -f %z "$ZST")
-BUILDER=$(pip show mcp-dblp 2>/dev/null | awk '/^Version/{print "mcp-dblp " $2}')
+"$(dirname "$0")/package_release.sh" "$REL" "$OUT"
+rm -f "$SQL"
 
-cat > latest.json <<JSON
-{
-  "schema": $SCHEMA,
-  "release": "$REL",
-  "file": "$ZST",
-  "size": $ZST_SIZE,
-  "sha256": "$ZST_SHA",
-  "sqlite_size": ${SQL_SIZE:-0},
-  "sqlite_sha256": "$SQL_SHA",
-  "publications": $PUBS,
-  "urls": ["https://github.com/szeider/mcp-dblp-index/releases/download/dblp-$REL/$ZST"],
-  "built": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "builder": "${BUILDER:-mcp-dblp}"
-}
-JSON
-cat latest.json
