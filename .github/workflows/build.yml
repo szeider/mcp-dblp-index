@@ -43,7 +43,7 @@ jobs:
         if: steps.rel.outputs.exists == 'false'
         run: |
           sudo apt-get update -q && sudo apt-get install -y -q zstd sqlite3
-          pip install -q "mcp-dblp @ git+https://github.com/szeider/mcp-dblp@main"
+          pip install -q "mcp-dblp==${{ vars.MCP_DBLP_VERSION || '2.0.0' }}"
           mcp-dblp-index --help >/dev/null
 
       - name: Build release
@@ -56,7 +56,7 @@ jobs:
           REL="${{ steps.rel.outputs.release }}"
           cd "${{ runner.temp }}/out"
           PUBS=$(python3 -c "import json;print(json.load(open('latest.json'))['publications'])")
-          gh release create "dblp-$REL" --title "dblp index $REL" \
+          gh release create "dblp-$REL" --latest --title "dblp index $REL" \
             --notes "Prebuilt SQLite index of the dblp XML dump released $REL ($PUBS publications). Data: CC0, https://dblp.org. Built by mcp-dblp-index-builder; see latest.json for checksums." \
             "dblp-$REL.sqlite.zst" latest.json
         env:

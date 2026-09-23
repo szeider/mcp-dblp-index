@@ -11,12 +11,16 @@ PUBS=$(sqlite3 "$SQL" "select v from meta where k='publications'")
 SQL_SIZE=$(stat -c %s "$SQL" 2>/dev/null || stat -f %z "$SQL")
 SQL_SHA=$(sha256sum "$SQL" 2>/dev/null | awk '{print $1}' || shasum -a 256 "$SQL" | awk '{print $1}')
 [ -n "$SQL_SHA" ] || SQL_SHA=$(shasum -a 256 "$SQL" | awk '{print $1}')
-echo "== compress $SQL ($SQL_SIZE bytes)"
-zstd -19 -T0 -q -f "$SQL" -o "$ZST"
+if [ -s "$ZST" ] && [ "$ZST" -nt "$SQL" ] && zstd -tq "$ZST"; then
+  echo "== reuse existing $ZST"
+else
+  echo "== compress $SQL ($SQL_SIZE bytes)"
+  zstd -19 -T0 -q -f "$SQL" -o "$ZST"
+fi
 ZST_SIZE=$(stat -c %s "$ZST" 2>/dev/null || stat -f %z "$ZST")
 ZST_SHA=$(sha256sum "$ZST" 2>/dev/null | awk '{print $1}' || shasum -a 256 "$ZST" | awk '{print $1}')
 [ -n "$ZST_SHA" ] || ZST_SHA=$(shasum -a 256 "$ZST" | awk '{print $1}')
-BUILDER=$(pip show mcp-dblp 2>/dev/null | awk '/^Version/{print "mcp-dblp " $2}')
+BUILDER="mcp-dblp $(python3 -c 'import importlib.metadata as m; print(m.version("mcp-dblp"))' 2>/dev/null || echo unknown)"
 cat > latest.json <<JSON
 {
   "schema": $SCHEMA,
@@ -29,7 +33,7 @@ cat > latest.json <<JSON
   "publications": $PUBS,
   "urls": ["https://github.com/szeider/mcp-dblp-index/releases/download/dblp-$REL/$ZST"],
   "built": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "builder": "${BUILDER:-mcp-dblp}"
+  "builder": "$BUILDER"
 }
 JSON
 cat latest.json
