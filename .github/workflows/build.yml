@@ -2,7 +2,10 @@ name: Build monthly dblp index
 
 on:
   schedule:
-    - cron: "17 6 2 * *"   # 2nd of each month, 06:17 UTC (dblp releases on the 1st)
+    # The dump of the 1st appears on DROPS between the 2nd and the 6th (2026: May 4,
+    # Jun 2, Jul 6, Aug 3, Sep 2 at 11:48 UTC). Runs before that, or after the month's
+    # release is published, end after the first step.
+    - cron: "17 6,14 2-12 * *"
   workflow_dispatch:
     inputs:
       release:
@@ -27,31 +30,39 @@ jobs:
           [ -n "$REL" ] || REL="$(date -u +%Y-%m)-01"
           echo "release=$REL" >> "$GITHUB_OUTPUT"
           if gh release view "dblp-$REL" >/dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"; echo "release dblp-$REL already published"
+            echo "build=false" >> "$GITHUB_OUTPUT"; echo "release dblp-$REL already published"
+            exit 0
+          fi
+          URL="https://drops.dagstuhl.de/storage/artifacts/dblp/xml/${REL%%-*}/dblp-$REL.xml.gz.md5"
+          UA="mcp-dblp-index-builder (https://github.com/szeider/mcp-dblp-index)"
+          if curl -sSfL -A "$UA" -o /dev/null "$URL"; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = schedule ] && [ "$(date -u +%-d)" -le 12 ]; then
+            echo "build=false" >> "$GITHUB_OUTPUT"; echo "dump $REL not on DROPS yet; next run retries"
           else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "::error::dump $REL not on DROPS: $URL"; exit 1
           fi
         env:
           GH_TOKEN: ${{ github.token }}
 
       - uses: actions/setup-python@v5
-        if: steps.rel.outputs.exists == 'false'
+        if: steps.rel.outputs.build == 'true'
         with:
           python-version: "3.12"
 
       - name: Install tools
-        if: steps.rel.outputs.exists == 'false'
+        if: steps.rel.outputs.build == 'true'
         run: |
           sudo apt-get update -q && sudo apt-get install -y -q zstd sqlite3
           pip install -q "mcp-dblp==${{ vars.MCP_DBLP_VERSION || '2.0.0' }}"
           mcp-dblp-index --help >/dev/null
 
       - name: Build release
-        if: steps.rel.outputs.exists == 'false'
+        if: steps.rel.outputs.build == 'true'
         run: scripts/build_release.sh "${{ steps.rel.outputs.release }}" "${{ runner.temp }}/out"
 
       - name: Publish release
-        if: steps.rel.outputs.exists == 'false'
+        if: steps.rel.outputs.build == 'true'
         run: |
           REL="${{ steps.rel.outputs.release }}"
           cd "${{ runner.temp }}/out"
@@ -63,7 +74,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
 
       - name: Keepalive commit
-        if: steps.rel.outputs.exists == 'false'
+        if: steps.rel.outputs.build == 'true'
         run: |
           echo "${{ steps.rel.outputs.release }}" > LAST_RELEASE
           git config user.name "github-actions[bot]"
@@ -72,6 +83,12 @@ jobs:
 
       - name: Open issue on failure
         if: failure()
-        run: gh issue create --title "Index build failed for ${{ steps.rel.outputs.release || 'unknown release' }}" --body "See run ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        run: |
+          # one issue per release: later failed runs comment on it
+          TITLE="Index build failed for ${{ steps.rel.outputs.release || 'unknown release' }}"
+          BODY="See run ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          N=$(gh issue list --state open --search "in:title \"$TITLE\"" --json number,title \
+                --jq "map(select(.title == \"$TITLE\"))[0].number // empty")
+          if [ -n "$N" ]; then gh issue comment "$N" --body "$BODY"; else gh issue create --title "$TITLE" --body "$BODY"; fi
         env:
           GH_TOKEN: ${{ github.token }}
