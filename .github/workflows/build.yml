@@ -19,6 +19,8 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      GH_REPO: ${{ github.repository }}  # gh runs outside the checkout (runner.temp/out)
     timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
