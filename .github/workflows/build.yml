@@ -33,14 +33,13 @@ jobs:
             echo "build=false" >> "$GITHUB_OUTPUT"; echo "release dblp-$REL already published"
             exit 0
           fi
-          URL="https://drops.dagstuhl.de/storage/artifacts/dblp/xml/${REL%%-*}/dblp-$REL.xml.gz.md5"
-          UA="mcp-dblp-index-builder (https://github.com/szeider/mcp-dblp-index)"
-          if curl -sSfL -A "$UA" -o /dev/null "$URL"; then
-            echo "build=true" >> "$GITHUB_OUTPUT"
+          # the month's dump, whatever its day (Oct 2026: dblp-2026-10-03.xml.gz)
+          if SRC=$(scripts/find_dump.sh "$REL"); then
+            echo "build=true" >> "$GITHUB_OUTPUT"; echo "dump for $REL: $SRC"
           elif [ "${{ github.event_name }}" = schedule ] && [ "$(date -u +%-d)" -le 12 ]; then
             echo "build=false" >> "$GITHUB_OUTPUT"; echo "dump $REL not on DROPS yet; next run retries"
           else
-            echo "::error::dump $REL not on DROPS: $URL"; exit 1
+            echo "::error::no dump for $REL on DROPS (scripts/find_dump.sh)"; exit 1
           fi
         env:
           GH_TOKEN: ${{ github.token }}
@@ -68,7 +67,7 @@ jobs:
           cd "${{ runner.temp }}/out"
           PUBS=$(python3 -c "import json;print(json.load(open('latest.json'))['publications'])")
           gh release create "dblp-$REL" --latest --title "dblp index $REL" \
-            --notes "Prebuilt SQLite index of the dblp XML dump released $REL ($PUBS publications). Data: CC0, https://dblp.org. Built by mcp-dblp-index-builder; see latest.json for checksums." \
+            --notes "Prebuilt SQLite index of the dblp XML dump of $(date -d "$REL" +'%B %Y') ($(cat SOURCE) on Dagstuhl DROPS, $PUBS publications). Data: CC0, https://dblp.org. Built by mcp-dblp-index-builder; see latest.json for checksums." \
             "dblp-$REL.sqlite.zst" latest.json
         env:
           GH_TOKEN: ${{ github.token }}
